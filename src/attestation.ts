@@ -4,11 +4,23 @@ import { bytesToHex } from "@noble/hashes/utils";
 import { sha384 } from "@noble/hashes/sha2";
 import { X509Certificate, X509ChainBuilder } from "@peculiar/x509";
 
+// download from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
+export const AWS_ROOT_CERT =
+  "MIICETCCAZagAwIBAgIRAPkxdWgbkK/hHUbMtOTn+FYwCgYIKoZIzj0EAwMwSTELMAkGA1UEBhMCVVMxDzANBgNVBAoMBkFtYXpvbjEMMAoGA1UECwwDQVdTMRswGQYDVQQDDBJhd3Mubml0cm8tZW5jbGF2ZXMwHhcNMTkxMDI4MTMyODA1WhcNNDkxMDI4MTQyODA1WjBJMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGQW1hem9uMQwwCgYDVQQLDANBV1MxGzAZBgNVBAMMEmF3cy5uaXRyby1lbmNsYXZlczB2MBAGByqGSM49AgEGBSuBBAAiA2IABPwCVOumCMHzaHDimtqQvkY4MpJzbolL//Zy2YlES1BR5TSksfbb48C8WBoyt7F2Bw7eEtaaP+ohG2bnUs990d0JX28TcPQXCEPZ3BABIeTPYwEoCWZEh8l5YoQwTcU/9KNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUkCW1DdkFR+eWw5b6cp3PmanfS5YwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2kAMGYCMQCjfy+Rocm9Xue4YnwWmNJVA44fA0P5W2OpYow9OYCVRaEevL8uO1XYru5xtMPWrfMCMQCi85sWBbJwKKXdS6BptQFuZbT73o/gBh1qUxl/nNr12UO8Yfwr6wPLb+6NIwLz3/Y=";
+
+export const KIND_INSTANCE = 63793;
+export const KIND_ROOT_CERT = 23793;
+export const KIND_CERT = 23797;
+
 interface AttestationData {
   public_key: Uint8Array;
   certificate: Uint8Array;
   cabundle: Uint8Array[];
   pcrs: Map<number, Uint8Array>;
+}
+
+function now() {
+  return Math.floor(Date.now() / 1000);
 }
 
 export function tv(e: Event, name: string) {
@@ -27,226 +39,365 @@ export function pcrDigest(data: Buffer | Uint8Array | string) {
   );
 }
 
-export function validateBuildCert(
-  certData: string,
-  pubkey: string,
-  pcr8: string
-) {
-  certData =
-    "-----BEGIN CERTIFICATE-----\n" +
-    certData +
-    "\n-----END CERTIFICATE-----\n";
-  const cert = new X509Certificate(certData);
-  // console.log("cert", cert);
-  if (!cert.isSelfSigned()) throw new Error("Cert not self-signed");
-  const now = new Date();
-  if (cert.notBefore > now || cert.notAfter < now)
-    throw new Error("Cert expired");
-  if (
-    !cert.verify({
-      publicKey: cert.publicKey,
-    })
-  )
-    throw new Error("Invalid cert signature");
-  const O = cert.issuer
-    .split(",")
-    .map((s) => s.trim())
-    .find((s) => s.startsWith("O="))
-    ?.split("=")[1];
-  if (O !== "Nostr") throw new Error("Cert not for Nostr");
-  const OU = cert.issuer
-    .split(",")
-    .map((s) => s.trim())
-    .find((s) => s.startsWith("OU="))
-    ?.split("=")[1];
-  const npub = nip19.npubEncode(pubkey);
-  if (OU !== npub) throw new Error("Wrong cert pubkey");
-
-  // pcr8 validation https://github.com/aws/aws-nitro-enclaves-cli/issues/446#issuecomment-1460766038
-  const fingerprint = sha384(new Uint8Array(cert.rawData));
-  const certPCR8 = pcrDigest(fingerprint);
-  // console.log("certPCR8", certPCR8);
-  if (certPCR8 !== pcr8) throw new Error("Invalid cert PCR8");
-}
-
-export function verifyBuildSignature(att: AttestationData, build: Event) {
-  const enclavePCR8 = bytesToHex(att.pcrs.get(8) || new Uint8Array());
-  if (!enclavePCR8) throw new Error("Bad attestation, no PCR8");
-  // console.log("enclavePCR8", enclavePCR8);
-  const buildPCR8 = build.tags.find(
-    (t) => t.length > 1 && t[0] === "PCR8"
-  )?.[1];
-  if (!buildPCR8) throw new Error("No PCR8 in build");
-  if (enclavePCR8 !== buildPCR8) throw new Error("No matching PCR8");
-
-  // it's not enough to just match pcr8 bcs this value is static
-  // in a build and anyone can observe it after an instance is
-  // launched and can commit to it by themselves and launch a new
-  // instance of this build as if they built it. so we have to
-  // actually check that buildCert matches pcr8 and check that buildCert
-  // content points to the build.pubkey
-  const buildCert = build.tags.find(
-    (t) => t.length > 1 && t[0] === "cert"
-  )?.[1];
-  if (!buildCert) throw new Error("No cert in build");
-
-  // validate the cert is for build.pubkey and produces the expected pcr8
-  validateBuildCert(buildCert, build.pubkey, enclavePCR8);
-}
-
-export function verifyInstanceSignature(att: AttestationData, instance: Event) {
-  const enclavePCR4 = bytesToHex(att.pcrs.get(4) || new Uint8Array());
-  if (!enclavePCR4) throw new Error("Bad attestation, no PCR4");
-  // console.log("enclavePCR4", enclavePCR4);
-  const instancePCR4 = instance.tags.find(
-    (t) => t.length > 1 && t[0] === "PCR4"
-  )?.[1];
-  if (!instancePCR4) throw new Error("No PCR4 in instance");
-  // console.log("instancePCR4", instancePCR4);
-  if (instancePCR4 !== enclavePCR4) throw new Error("No matching PCR4");
-}
-
-export async function validateInstance(e: Event) {
-  if (e.kind !== 63793) throw new Error("Invalid instance event kind");
-  if (!validateEvent(e) || !verifyEvent(e))
-    throw new Error("Invalid instance event");
-
-  // parse attestation content
-  const binString = atob(e.content);
-  const arr = Uint8Array.from(binString, (m) => m.codePointAt(0) as number);
-  const COSE_Sign1 = decode(arr);
-  // console.log(COSE_Sign1);
-
-  // COSE_Sign1 object is an array of size 4 (protected headers, un protected headers, payload, and signature)
-  if (!Array.isArray(COSE_Sign1) || COSE_Sign1.length !== 4)
-    throw new Error("Bad attestation");
-
-  // header size
-  if (COSE_Sign1[0].length !== 4) throw new Error("Bad attestation");
-  const ad_pheader = COSE_Sign1[0];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const header: any = decode(ad_pheader);
-  // console.log("header", header);
-  if (!header) throw new Error("Invalid header");
-
-  // should be negative 35 as it maps to the P-384 curve that Nitro Enclaves use
-  if (header.get(1) !== -35) throw new Error("Bad header");
-
-  const unheader = COSE_Sign1[1];
-  // AWS Nitro Enclaves do not use unprotected headers. Therefore, the expected is a Type 5 (map) with zero items
-  if (typeof unheader !== "object" || Object.keys(unheader).length)
-    throw new Error("Bad unprotected header");
-
-  const signature = COSE_Sign1[3];
-  // console.log("signature", signature);
-  // The signature has to be a Type 2 (raw bytes) of exactly 96 bytes
-  if (signature.length !== 96) throw new Error("Bad signature");
-
-  const ad_signed = COSE_Sign1[2];
-  const payload = decode(ad_signed) as AttestationData;
-  console.log("payload", payload);
-  if (!payload) throw new Error("Invalid payload");
-
-  // must match event pubkey
-  const public_key = bytesToHex(payload.public_key);
-  // console.log("public_key", public_key);
-  if (public_key !== e.pubkey) throw new Error("Invalid pubkey");
-
-  // now check that cert presented by our enclave is valid
-  const cert = new X509Certificate(payload.certificate);
-  console.log("cert", cert);
-
-  // download from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
-  const rootBase64 =
-    "MIICETCCAZagAwIBAgIRAPkxdWgbkK/hHUbMtOTn+FYwCgYIKoZIzj0EAwMwSTELMAkGA1UEBhMCVVMxDzANBgNVBAoMBkFtYXpvbjEMMAoGA1UECwwDQVdTMRswGQYDVQQDDBJhd3Mubml0cm8tZW5jbGF2ZXMwHhcNMTkxMDI4MTMyODA1WhcNNDkxMDI4MTQyODA1WjBJMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGQW1hem9uMQwwCgYDVQQLDANBV1MxGzAZBgNVBAMMEmF3cy5uaXRyby1lbmNsYXZlczB2MBAGByqGSM49AgEGBSuBBAAiA2IABPwCVOumCMHzaHDimtqQvkY4MpJzbolL//Zy2YlES1BR5TSksfbb48C8WBoyt7F2Bw7eEtaaP+ohG2bnUs990d0JX28TcPQXCEPZ3BABIeTPYwEoCWZEh8l5YoQwTcU/9KNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUkCW1DdkFR+eWw5b6cp3PmanfS5YwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2kAMGYCMQCjfy+Rocm9Xue4YnwWmNJVA44fA0P5W2OpYow9OYCVRaEevL8uO1XYru5xtMPWrfMCMQCi85sWBbJwKKXdS6BptQFuZbT73o/gBh1qUxl/nNr12UO8Yfwr6wPLb+6NIwLz3/Y=";
-  const root = new X509Certificate(rootBase64);
-  // console.log("root", root);
-
-  // take root from external known good file
-  const certificates = [root];
-  // Skip the first one [0] as that is the Root CA and we want to read it from an external source
-  for (let i = 1; i < payload.cabundle.length; i++) {
-    certificates.push(new X509Certificate(payload.cabundle[i]));
-  }
-  // console.log("cabundle", certificates);
-
-  // build a verified chain of certificates starting
-  // with our attestation cert and ending on the known root
-  const builder = new X509ChainBuilder({
-    certificates,
-  });
-  const chain = await builder.build(cert);
-  // console.log("chain", chain);
-  if (chain[0].serialNumber !== cert.serialNumber)
-    throw new Error("Invalid cert chain");
-  if (chain[chain.length - 1].serialNumber !== root.serialNumber)
-    throw new Error("Invalid cert chain root");
-
-  // verify timestamps
-  const signatureOnly = false;
-  for (const c of chain) {
-    if (!c.verify({ signatureOnly }))
-      throw new Error("Cert expired or invalid");
+export class Validator {
+  private allowExpired?: boolean;
+  private printLogs?: boolean;
+  constructor(
+    opts: {
+      allowExpired?: boolean;
+      printLogs?: boolean;
+    } = {}
+  ) {
+    this.allowExpired = opts.allowExpired;
+    this.printLogs = opts.printLogs;
   }
 
-  // now check that attestation was signed by the public key
-  // of the certificate
-  const algorithm = {
-    ...cert.publicKey.algorithm,
-    ...cert.signatureAlgorithm,
-  };
-  const publicKey = await cert.publicKey.export(algorithm, ["verify"], crypto);
-  // console.log("publicKey", publicKey, algorithm);
+  public async validateBuildCert(
+    certData: string,
+    pubkey: string,
+    pcr8: string
+  ) {
+    certData =
+      "-----BEGIN CERTIFICATE-----\n" +
+      certData +
+      "\n-----END CERTIFICATE-----\n";
+    const cert = new X509Certificate(certData);
+    // console.log("cert", cert);
+    if (!cert.isSelfSigned()) throw new Error("Cert not self-signed");
+    if (
+      !(await cert.verify({
+        signatureOnly: !!this.allowExpired,
+      }))
+    )
+      throw new Error("Invalid cert signature");
 
-  // Recreate COSE_Sign1 structure, and serilise it into a buffer
-  // cbor_item_t * cose_sig_arr = cbor_new_definite_array(4);
-  const cose_sig_arr = [];
-  // cbor_item_t * cose_sig_arr_0_sig1 = cbor_build_string("Signature1");
-  const sig_header = "Signature1";
-  // cbor_item_t * cose_sig_arr_2_empty = cbor_build_bytestring(NULL, 0);
-  const empty_array = new Uint8Array();
+    // helper
+    const getField = (name: string) => {
+      return cert.issuer
+        .split(",")
+        .map((s) => s.trim())
+        .find((s) => s.startsWith(name + "="))
+        ?.split("=")[1];
+    };
 
-  // assert(cbor_array_push(cose_sig_arr, cose_sig_arr_0_sig1));
-  cose_sig_arr.push(sig_header);
-  // assert(cbor_array_push(cose_sig_arr, ad_pheader));
-  cose_sig_arr.push(ad_pheader);
-  // assert(cbor_array_push(cose_sig_arr, cose_sig_arr_2_empty));
-  cose_sig_arr.push(empty_array);
-  // assert(cbor_array_push(cose_sig_arr, ad_signed));
-  cose_sig_arr.push(ad_signed);
-  // console.log("cose_sig_arr", cose_sig_arr);
+    const O = getField("O");
+    if (O !== "Nostr") throw new Error("Cert not for Nostr");
+    const OU = getField("OU");
+    const npub = nip19.npubEncode(pubkey);
+    if (OU !== npub) throw new Error("Wrong cert pubkey");
 
-  // unsigned char sig_struct_buffer[SIG_STRUCTURE_BUFFER_S];
-  // size_t sig_struct_buffer_len = cbor_serialize(cose_sig_arr, sig_struct_buffer, SIG_STRUCTURE_BUFFER_S);
-  const sig_struct_buffer = encode(cose_sig_arr);
-  // console.log("sig_struct_buffer", sig_struct_buffer);
-
-  // verify signature
-  const ok = await crypto.subtle.verify(
-    cert.signatureAlgorithm,
-    publicKey,
-    signature,
-    sig_struct_buffer
-  );
-  // console.log("signature ok", ok);
-  if (!ok) throw new Error("Invalid attestation signature");
-
-  const instance = tv(e, "instance");
-  if (instance) {
-    const ie = JSON.parse(instance);
-    if (ie.kind !== 63796)
-      throw new Error("Invalid instance signature event kind");
-    if (!validateEvent(ie) || !verifyEvent(ie))
-      throw new Error("Invalid instance signature");
-    verifyInstanceSignature(payload, ie);
+    // pcr8 validation https://github.com/aws/aws-nitro-enclaves-cli/issues/446#issuecomment-1460766038
+    const fingerprint = sha384(new Uint8Array(cert.rawData));
+    const certPCR8 = pcrDigest(fingerprint);
+    // console.log("certPCR8", certPCR8);
+    if (certPCR8 !== pcr8) throw new Error("Invalid cert PCR8");
   }
-  const build = tv(e, "build");
-  if (build) {
-    const be = JSON.parse(build);
-    if (be.kind !== 63795)
-      throw new Error("Invalid build signature event kind");
-    if (!validateEvent(be) || !verifyEvent(be))
-      throw new Error("Invalid build signature");
-    verifyBuildSignature(payload, be);
+
+  public async verifyBuildSignature(att: AttestationData, build: Event) {
+    const enclavePCR8 = bytesToHex(att.pcrs.get(8) || new Uint8Array());
+    if (!enclavePCR8) throw new Error("Bad attestation, no PCR8");
+    // console.log("enclavePCR8", enclavePCR8);
+    const buildPCR8 = tv(build, "PCR8");
+    if (!buildPCR8) throw new Error("No PCR8 in build");
+    if (enclavePCR8 !== buildPCR8) throw new Error("No matching PCR8");
+
+    // it's not enough to just match pcr8 bcs this value is static
+    // in a build and anyone can observe it after an instance is
+    // launched and can commit to it by themselves and launch a new
+    // instance of this build as if they built it. so we have to
+    // actually check that buildCert matches pcr8 and check that buildCert
+    // content points to the build.pubkey
+    const buildCert = tv(build, "cert");
+    if (!buildCert) throw new Error("No cert in build");
+
+    // validate the cert is for build.pubkey and produces the expected pcr8
+    await this.validateBuildCert(buildCert, build.pubkey, enclavePCR8);
+  }
+
+  public async verifyInstanceSignature(att: AttestationData, instance: Event) {
+    const enclavePCR4 = bytesToHex(att.pcrs.get(4) || new Uint8Array());
+    if (!enclavePCR4) throw new Error("Bad attestation, no PCR4");
+    // console.log("enclavePCR4", enclavePCR4);
+    const instancePCR4 = tv(instance, "PCR4");
+    if (!instancePCR4) throw new Error("No PCR4 in instance");
+    // console.log("instancePCR4", instancePCR4);
+    if (instancePCR4 !== enclavePCR4) throw new Error("No matching PCR4");
+  }
+
+  private fromBase64(base64: string): Uint8Array {
+    if (typeof window !== "undefined" && typeof window.atob === "function") {
+      // Browser environment
+      const binary = window.atob(base64);
+      return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    } else if (typeof Buffer !== "undefined") {
+      // Node.js environment
+      return Uint8Array.from(Buffer.from(base64, "base64"));
+    } else {
+      throw new Error("Base64 decoding not supported in this environment");
+    }
+  }
+
+  public async parseValidateAttestation(attestation: string, pubkey: string) {
+    // parse attestation content
+    const arr = this.fromBase64(attestation);
+    const COSE_Sign1 = decode(arr);
+    // console.log(COSE_Sign1);
+
+    // COSE_Sign1 object is an array of size 4 (protected headers, un protected headers, payload, and signature)
+    if (!Array.isArray(COSE_Sign1) || COSE_Sign1.length !== 4)
+      throw new Error("Bad attestation");
+
+    // header size
+    if (COSE_Sign1[0].length !== 4) throw new Error("Bad attestation header");
+    const ad_pheader = COSE_Sign1[0];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const header: any = decode(ad_pheader);
+    // console.log("header", header);
+    if (!header) throw new Error("Invalid header");
+
+    // should be negative 35 as it maps to the P-384 curve that Nitro Enclaves use
+    if (header.get(1) !== -35) throw new Error("Bad header");
+
+    const unheader = COSE_Sign1[1];
+    // AWS Nitro Enclaves do not use unprotected headers. Therefore, the expected is a Type 5 (map) with zero items
+    if (typeof unheader !== "object" || Object.keys(unheader).length)
+      throw new Error("Bad unprotected header");
+
+    const signature = COSE_Sign1[3];
+    // console.log("signature", signature);
+    // The signature has to be a Type 2 (raw bytes) of exactly 96 bytes
+    if (signature.length !== 96) throw new Error("Bad signature");
+
+    const ad_signed = COSE_Sign1[2];
+    const payload = decode(ad_signed) as AttestationData;
+    if (this.printLogs) console.log("payload", payload);
+    if (!payload) throw new Error("Invalid payload");
+
+    // must match event pubkey
+    const public_key = bytesToHex(payload.public_key);
+    // console.log("public_key", public_key);
+    if (public_key !== pubkey)
+      throw new Error("Wrong pubkey certified by attestation");
+
+    // now check that cert presented by our enclave is valid
+    const cert = new X509Certificate(payload.certificate);
+    if (this.printLogs) console.log("cert", cert);
+
+    const root = new X509Certificate(AWS_ROOT_CERT);
+    // console.log("root", root);
+
+    // take root from external known good file
+    const certificates = [root];
+    // Skip the first one [0] as that is the Root CA and we want to read it from an external source
+    for (let i = 1; i < payload.cabundle.length; i++) {
+      certificates.push(new X509Certificate(payload.cabundle[i]));
+    }
+    // console.log("cabundle", certificates);
+
+    // build a verified chain of certificates starting
+    // with our attestation cert and ending on the known root
+    const builder = new X509ChainBuilder({
+      certificates,
+    });
+    const chain = await builder.build(cert);
+    // console.log("chain", chain);
+    if (chain[0].serialNumber !== cert.serialNumber)
+      throw new Error("Invalid cert chain");
+    if (chain[chain.length - 1].serialNumber !== root.serialNumber)
+      throw new Error("Invalid cert chain root");
+
+    // verify signer pubkeys and timestamps
+    const signatureOnly = !!this.allowExpired;
+    for (let i = 0; i < chain.length; i++) {
+      const c = chain[i];
+      // next cert is signer of current key, last cert (root) is self-signed
+      const publicKey =
+        i < chain.length - 1 ? chain[i + 1].publicKey : undefined;
+      if (!(await c.verify({ publicKey, signatureOnly })))
+        throw new Error("Cert expired or invalid");
+    }
+
+    // now check that attestation was signed by the public key
+    // of the certificate
+    const algorithm = {
+      ...cert.publicKey.algorithm,
+      ...cert.signatureAlgorithm,
+    };
+    const publicKey = await cert.publicKey.export(
+      algorithm,
+      ["verify"],
+      crypto
+    );
+    // console.log("publicKey", publicKey, algorithm);
+
+    // Recreate COSE_Sign1 structure, and serilise it into a buffer
+    // cbor_item_t * cose_sig_arr = cbor_new_definite_array(4);
+    const cose_sig_arr = [];
+    // cbor_item_t * cose_sig_arr_0_sig1 = cbor_build_string("Signature1");
+    const sig_header = "Signature1";
+    // cbor_item_t * cose_sig_arr_2_empty = cbor_build_bytestring(NULL, 0);
+    const empty_array = new Uint8Array();
+
+    // assert(cbor_array_push(cose_sig_arr, cose_sig_arr_0_sig1));
+    cose_sig_arr.push(sig_header);
+    // assert(cbor_array_push(cose_sig_arr, ad_pheader));
+    cose_sig_arr.push(ad_pheader);
+    // assert(cbor_array_push(cose_sig_arr, cose_sig_arr_2_empty));
+    cose_sig_arr.push(empty_array);
+    // assert(cbor_array_push(cose_sig_arr, ad_signed));
+    cose_sig_arr.push(ad_signed);
+    // console.log("cose_sig_arr", cose_sig_arr);
+
+    // unsigned char sig_struct_buffer[SIG_STRUCTURE_BUFFER_S];
+    // size_t sig_struct_buffer_len = cbor_serialize(cose_sig_arr, sig_struct_buffer, SIG_STRUCTURE_BUFFER_S);
+    const sig_struct_buffer = encode(cose_sig_arr);
+    // console.log("sig_struct_buffer", sig_struct_buffer);
+
+    // verify signature
+    const ok = await crypto.subtle.verify(
+      cert.signatureAlgorithm,
+      publicKey,
+      signature,
+      sig_struct_buffer
+    );
+    // console.log("signature ok", ok);
+    if (!ok) throw new Error("Invalid attestation signature");
+
+    return payload;
+  }
+
+  private getCertTarget(cert: Event) {
+    if (cert.kind === KIND_ROOT_CERT) return cert.pubkey;
+    if (cert.kind !== KIND_CERT) throw new Error("Invalid cert kind");
+    const pTags = cert.tags
+      .filter((t) => t.length > 1 && t[0] === "p")
+      .map((t) => t[1]);
+    if (pTags.length !== 1)
+      throw new Error("Exactly one pubkey required in cert");
+    return pTags[0];
+  }
+
+  public async parseValidateRootCertAttestation(cert: Event) {
+    if (cert.kind !== KIND_ROOT_CERT) throw new Error("Invalid root cert kind");
+    if (!validateEvent(cert) || !verifyEvent(cert))
+      throw new Error("Invalid root cert event");
+    return await this.parseValidateAttestation(cert.content, cert.pubkey);
+  }
+
+  public async validateCert(cert: Event, pubkey: string) {
+    if (cert.kind !== KIND_CERT) throw new Error("Invalid cert kind");
+    if (!validateEvent(cert) || !verifyEvent(cert))
+      throw new Error("Invalid cert event");
+    if (this.getCertTarget(cert) !== pubkey)
+      throw new Error("Wrong cert chain");
+  }
+
+  public async validateRootCert(cert: Event, pubkey: string) {
+    if (cert.pubkey !== pubkey) throw new Error("Wrong root pubkey");
+    await this.parseValidateRootCertAttestation(cert);
+  }
+
+  public async validateInstance(e: Event) {
+    if (e.kind !== KIND_INSTANCE)
+      throw new Error("Invalid instance event kind");
+    if (!validateEvent(e) || !verifyEvent(e))
+      throw new Error("Invalid instance event");
+
+    // attestation used to be in the content field, moved to tee_root tag
+    const teeRootTag = e.tags.find(
+      (t) => t.length > 1 && t[0] === "tee_root"
+    )?.[1];
+    const payload = teeRootTag
+      ? await this.parseValidateRootCertAttestation(JSON.parse(teeRootTag))
+      : await this.parseValidateAttestation(e.content, e.pubkey);
+
+    const instance = tv(e, "instance");
+    if (instance) {
+      const ie = JSON.parse(instance);
+      if (ie.kind !== 63796)
+        throw new Error("Invalid instance signature event kind");
+      if (!validateEvent(ie) || !verifyEvent(ie))
+        throw new Error("Invalid instance signature");
+      await this.verifyInstanceSignature(payload, ie);
+    }
+    const build = tv(e, "build");
+    if (build) {
+      const be = JSON.parse(build);
+      if (be.kind !== 63795)
+        throw new Error("Invalid build signature event kind");
+      if (!validateEvent(be) || !verifyEvent(be))
+        throw new Error("Invalid build signature");
+      await this.verifyBuildSignature(payload, be);
+    }
+  }
+
+  public async validateEnclavedEvent(e: Event) {
+    if (!validateEvent(e) || !verifyEvent(e)) throw new Error("Invalid event");
+
+    // at least root must be present
+    const rootTag = e.tags.find(
+      (t) => t.length > 1 && t[0] === "tee_root"
+    )?.[1];
+    if (!rootTag) throw new Error("No tee_root tag");
+
+    // certs are present if e.pubkey !== root.pubkey
+    const certTags = e.tags
+      .filter((t) => t.length > 1 && t[0] === "tee_cert")
+      .map((t) => t[1]);
+
+    // parse events
+    const root = JSON.parse(rootTag) as Event;
+    // certs must be ordered properly from root to leaf
+    const certs = certTags.map((c) => JSON.parse(c) as Event);
+
+    // fast kind check
+    if (root.kind !== KIND_ROOT_CERT) throw new Error("Wrong root cert kind");
+
+    // helpers
+    const checkCertPubkey = (cert: Event, pubkey: string) => {
+      const targetPubkey = this.getCertTarget(cert);
+      if (targetPubkey !== pubkey) throw new Error("Broken pubkey chain");
+      if (!this.allowExpired) {
+        const expiration = parseInt(tv(cert, "expiration") || "0");
+        if (expiration < now()) throw new Error("Cert expired");
+      }
+    };
+    const getPrevCert = (i: number) => {
+      return i ? certs[i - 1] : root;
+    };
+
+    // check refs first to exit faster on failure,
+    // root_cert is attested by AWS,
+    // and then first cert is by root_cert.pubkey linking to the
+    // next cert, with last cert linking to e.pubkey
+    for (let i = 0; i < certs.length; i++) {
+      const cert = certs[i];
+      if (cert.kind !== KIND_CERT) throw new Error("Wrong cert kind");
+
+      // prev cert (or root) signs the current cert's pubkey
+      checkCertPubkey(getPrevCert(i), cert.pubkey);
+    }
+    // last cert/root signs the event's pubkey
+    checkCertPubkey(getPrevCert(certs.length), e.pubkey);
+
+    // now that chain seems fine do real validation
+    await this.parseValidateRootCertAttestation(root);
+
+    // validate i'th pubkey against i-1'th cert
+    const validate = async (i: number, pubkey: string) => {
+      if (i) {
+        await this.validateCert(certs[i - 1], pubkey);
+      } else {
+        await this.validateRootCert(root, pubkey);
+      }
+    };
+
+    // loop over certs if any
+    for (let i = 0; i < certs.length; i++) {
+      const cert = certs[i];
+      await validate(i, cert.pubkey);
+    }
+    // last cert signs the event's pubkey
+    await validate(certs.length, e.pubkey);
   }
 }

@@ -1,6 +1,6 @@
 {
 	"name": "nostr-enclaves",
-	"version": "1.0.4",
+	"version": "2.0.0",
 	"main-off": "dist/index.cjs.js",
 	"module": "dist/index.esm.js",
 	"types": "dist/types/index.d.ts",
