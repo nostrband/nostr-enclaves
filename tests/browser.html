@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Nostr Enclaves Browser Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        #results {
+            white-space: pre-wrap;
+            font-family: monospace;
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .error { color: #d32f2f; }
+        .success { color: #388e3c; }
+        .skip { color: #f57c00; }
+    </style>
+</head>
+<body>
+    <h1>Nostr Enclaves Browser Test</h1>
+    <p>Paste JSON events (one per line) to validate:</p>
+    <textarea id="input" placeholder="Paste JSON events here (one per line)"></textarea>
+    <button onclick="validateEvents()">Validate</button>
+    <div id="results"></div>
+
+    <script type="module">
+        // Import required dependencies
+        import { Validator } from 'https://unpkg.com/nostr-enclaves@2.0.7/dist/index.js';
+
+        const validator = new Validator({ allowExpired: false, printLogs: false });
+
+        async function validateEvent(event) {
+            if (!event || typeof event !== "object") {
+                return { valid: false, message: 'invalid: not a valid JSON object' };
+            }
+
+            try {
+                if (event.kind === 63793) {
+                    await validator.validateInstance(event);
+                    return { valid: true, message: `valid ${event.kind} ${event.id}` };
+                } else if (event.kind === 13196) {
+                    await validator.validateEnclavedEvent(event);
+                    return { valid: true, message: `valid ${event.kind} ${event.id}` };
+                } else {
+                    return { valid: false, skipped: true, message: `skipped: unsupported event kind ${event.kind}` };
+                }
+            } catch (e) {
+                return { valid: false, message: `invalid ${event.kind} ${event.id} ${e.message}` };
+            }
+        }
+
+        window.validateEvents = async function() {
+            const input = document.getElementById('input').value;
+            const results = document.getElementById('results');
+            results.innerHTML = '';
+            
+            const lines = input.split('\n').filter(line => line.trim());
+            
+            for (const line of lines) {
+                try {
+                    const event = JSON.parse(line);
+                    const result = await validateEvent(event);
+                    
+                    const className = result.valid ? 'success' : (result.skipped ? 'skip' : 'error');
+                    appendResult(result.message, className);
+                } catch (e) {
+                    appendResult('invalid: failed to parse JSON', 'error');
+                }
+            }
+        }
+
+        function appendResult(text, className) {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.textContent = text;
+            div.className = className;
+            results.appendChild(div);
+        }
+    </script>
+</body>
+</html> 

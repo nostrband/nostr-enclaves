@@ -3,6 +3,8 @@ import { decode, encode } from "cbor2";
 import { bytesToHex } from "@noble/hashes/utils";
 import { sha384 } from "@noble/hashes/sha2";
 import { X509Certificate, X509ChainBuilder } from "@peculiar/x509";
+import { base64ToUint8Array } from "./base64-utils";
+import { getCrypto, getSubtleCrypto } from "./crypto-utils";
 
 // download from https://aws-nitro-enclaves.amazonaws.com/AWS_NitroEnclaves_Root-G1.zip
 export const AWS_ROOT_CERT =
@@ -39,6 +41,11 @@ export function pcrDigest(data: Buffer | Uint8Array | string) {
   );
 }
 
+interface CoseHeader {
+    get(key: number): number;
+    // add other required properties
+}
+
 export class Validator {
   private allowExpired?: boolean;
   private printLogs?: boolean;
@@ -57,6 +64,12 @@ export class Validator {
     pubkey: string,
     pcr8: string
   ) {
+    if (!certData || !pubkey || !pcr8) {
+        throw new Error("Missing required parameters");
+    }
+    if (!/^[a-zA-Z0-9+/=]+$/.test(certData)) {
+        throw new Error("Invalid certificate data format");
+    }
     certData =
       "-----BEGIN CERTIFICATE-----\n" +
       certData +
@@ -125,16 +138,7 @@ export class Validator {
   }
 
   private fromBase64(base64: string): Uint8Array {
-    if (typeof window !== "undefined" && typeof window.atob === "function") {
-      // Browser environment
-      const binary = window.atob(base64);
-      return Uint8Array.from(binary, (c) => c.charCodeAt(0));
-    } else if (typeof Buffer !== "undefined") {
-      // Node.js environment
-      return Uint8Array.from(Buffer.from(base64, "base64"));
-    } else {
-      throw new Error("Base64 decoding not supported in this environment");
-    }
+    return base64ToUint8Array(base64);
   }
 
   public async parseValidateAttestation(attestation: string, pubkey: string) {
@@ -151,7 +155,7 @@ export class Validator {
     if (COSE_Sign1[0].length !== 4) throw new Error("Bad attestation header");
     const ad_pheader = COSE_Sign1[0];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const header: any = decode(ad_pheader);
+    const header = decode(ad_pheader) as CoseHeader;
     // console.log("header", header);
     if (!header) throw new Error("Invalid header");
 
@@ -189,7 +193,11 @@ export class Validator {
     // take root from external known good file
     const certificates = [root];
     // Skip the first one [0] as that is the Root CA and we want to read it from an external source
-    for (let i = 1; i < payload.cabundle.length; i++) {
+    const MAX_CERT_BUNDLE_SIZE = 20; // adjust as needed
+    if (payload.cabundle.length > MAX_CERT_BUNDLE_SIZE) {
+        throw new Error("Certificate bundle too large");
+    }
+    for (let i = 0; i < payload.cabundle.length; i++) {
       certificates.push(new X509Certificate(payload.cabundle[i]));
     }
     // console.log("cabundle", certificates);
@@ -226,7 +234,7 @@ export class Validator {
     const publicKey = await cert.publicKey.export(
       algorithm,
       ["verify"],
-      crypto
+      await getCrypto()
     );
     // console.log("publicKey", publicKey, algorithm);
 
@@ -254,7 +262,7 @@ export class Validator {
     // console.log("sig_struct_buffer", sig_struct_buffer);
 
     // verify signature
-    const ok = await crypto.subtle.verify(
+    const ok = await (await getSubtleCrypto()).verify(
       cert.signatureAlgorithm,
       publicKey,
       signature,

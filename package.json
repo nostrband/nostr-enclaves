@@ -1,34 +1,46 @@
 {
-	"name": "nostr-enclaves",
-	"version": "2.0.0",
-	"main-off": "dist/index.cjs.js",
-	"module": "dist/index.esm.js",
-	"types": "dist/types/index.d.ts",
-	"type": "module",
-	"files": [
-		"dist",
-		"package.json"
-	],
-	"scripts": {
-		"build": "rollup -c"
-	},
-	"keywords": [
-		"nostr",
-		"aws nitro enclave"
-	],
-	"author": "bekbolsun22",
-	"license": "MIT",
-	"description": "",
-	"devDependencies": {
-		"@rollup/plugin-terser": "^0.4.4",
-		"@rollup/plugin-typescript": "^12.1.2",
-		"@types/node": "^22.13.14",
-		"rollup": "^4.37.0"
-	},
-	"dependencies": {
-		"@noble/hashes": "^1.7.1",
-		"@peculiar/x509": "^1.12.3",
-		"cbor2": "^1.12.0",
-		"nostr-tools": "^2.11.0"
-	}
+  "name": "nostr-enclaves",
+  "version": "2.0.7",
+  "description": "Nostr + AWS Nitro Enclaves utilities",
+  "author": "artur@nostr.band",
+  "license": "MIT",
+  "keywords": ["nostr", "aws nitro enclave"],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/types/index.d.ts"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "*": ["dist/types/*"]
+    }
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "rollup -c"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "@peculiar/x509": "^1.12.3",
+    "cbor2": "^1.12.0",
+    "nostr-tools": "^2.11.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.1",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^12.1.2",
+    "@types/node": "^22.13.14",
+    "rollup": "^4.37.0",
+    "typescript": "^5.4.5"
+  }
 }
