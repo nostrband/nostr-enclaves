@@ -1,6 +1,6 @@
 {
   "name": "nostr-enclaves",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "Nostr + AWS Nitro Enclaves utilities",
   "author": "artur@nostr.band",
   "license": "MIT",
