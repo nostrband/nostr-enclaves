@@ -42,8 +42,8 @@ export function pcrDigest(data: Buffer | Uint8Array | string) {
 }
 
 interface CoseHeader {
-    get(key: number): number;
-    // add other required properties
+  get(key: number): number;
+  // add other required properties
 }
 
 export class Validator {
@@ -65,10 +65,10 @@ export class Validator {
     pcr8: string
   ) {
     if (!certData || !pubkey || !pcr8) {
-        throw new Error("Missing required parameters");
+      throw new Error("Missing required parameters");
     }
     if (!/^[a-zA-Z0-9+/=]+$/.test(certData)) {
-        throw new Error("Invalid certificate data format");
+      throw new Error("Invalid certificate data format");
     }
     certData =
       "-----BEGIN CERTIFICATE-----\n" +
@@ -141,7 +141,7 @@ export class Validator {
     return base64ToUint8Array(base64);
   }
 
-  public async parseValidateAttestation(attestation: string, pubkey: string) {
+  public async parseValidateAttestation(attestation: string, pubkey?: string) {
     // parse attestation content
     const arr = this.fromBase64(attestation);
     const COSE_Sign1 = decode(arr);
@@ -178,10 +178,12 @@ export class Validator {
     if (!payload) throw new Error("Invalid payload");
 
     // must match event pubkey
-    const public_key = bytesToHex(payload.public_key);
-    // console.log("public_key", public_key);
-    if (public_key !== pubkey)
-      throw new Error("Wrong pubkey certified by attestation");
+    if (pubkey) {
+      const public_key = bytesToHex(payload.public_key);
+      // console.log("public_key", public_key);
+      if (public_key !== pubkey)
+        throw new Error("Wrong pubkey certified by attestation");
+    }
 
     // now check that cert presented by our enclave is valid
     const cert = new X509Certificate(payload.certificate);
@@ -195,7 +197,7 @@ export class Validator {
     // Skip the first one [0] as that is the Root CA and we want to read it from an external source
     const MAX_CERT_BUNDLE_SIZE = 20; // adjust as needed
     if (payload.cabundle.length > MAX_CERT_BUNDLE_SIZE) {
-        throw new Error("Certificate bundle too large");
+      throw new Error("Certificate bundle too large");
     }
     for (let i = 0; i < payload.cabundle.length; i++) {
       certificates.push(new X509Certificate(payload.cabundle[i]));
@@ -262,12 +264,9 @@ export class Validator {
     // console.log("sig_struct_buffer", sig_struct_buffer);
 
     // verify signature
-    const ok = await (await getSubtleCrypto()).verify(
-      cert.signatureAlgorithm,
-      publicKey,
-      signature,
-      sig_struct_buffer
-    );
+    const ok = await (
+      await getSubtleCrypto()
+    ).verify(cert.signatureAlgorithm, publicKey, signature, sig_struct_buffer);
     // console.log("signature ok", ok);
     if (!ok) throw new Error("Invalid attestation signature");
 
