@@ -1,9 +1,18 @@
 import readline from "node:readline";
 import { Validator } from "../dist";
+import { hexToBytes } from "@noble/hashes/utils";
 
 async function runNodeTests() {
-  const validator = new Validator({ allowExpired: false, printLogs: false });
-  
+  const validator = new Validator({
+    allowExpired: false,
+    printLogs: true,
+    // expectedPcrs: new Map([
+    //   [0, hexToBytes("6dc806f3a214e71f4a468979704c90abe1e6597af6360dbd92d9ba1861300be6c48a5e4c95e453046d48fa62b6b296f8")],
+    //   [1, hexToBytes("4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493")],
+    //   [2, hexToBytes("d4832bd8fd73135d7a8b1f8f26e31a2b55e68b0f430640b15ffaeb250a38d415e9b83e7511e0a58660222579b8976ccd")],
+    // ])
+  });
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -13,15 +22,16 @@ async function runNodeTests() {
   rl.on("line", async (line) => {
     try {
       const event = JSON.parse(line);
-      
+
       if (!event || typeof event !== "object") {
         console.log("invalid: not a valid JSON object");
         return;
       }
 
+      let validPcrs = false;
       try {
         if (event.kind === 63793) {
-          await validator.validateInstance(event);
+          validPcrs = await validator.validateInstance(event);
         } else if (event.kind === 13196) {
           await validator.validateEnclavedEvent(event);
         } else {
@@ -29,7 +39,8 @@ async function runNodeTests() {
           return;
         }
 
-        console.log("valid", event.kind, event.id);
+        if (validPcrs) console.log("valid", event.kind, event.id);
+        else console.log("invalid pcrs", event.kind, event.id);
       } catch (e) {
         console.log("invalid", event.kind, event.id, e.message);
       }
@@ -39,4 +50,4 @@ async function runNodeTests() {
   });
 }
 
-runNodeTests(); 
+runNodeTests();

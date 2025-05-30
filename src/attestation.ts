@@ -14,7 +14,7 @@ export const KIND_INSTANCE = 63793;
 export const KIND_ROOT_CERT = 23793;
 export const KIND_CERT = 23797;
 
-interface AttestationData {
+export interface AttestationData {
   public_key: Uint8Array;
   certificate: Uint8Array;
   cabundle: Uint8Array[];
@@ -49,14 +49,17 @@ interface CoseHeader {
 export class Validator {
   private allowExpired?: boolean;
   private printLogs?: boolean;
+  private expectedPcrs?: Map<number, Uint8Array>;
   constructor(
     opts: {
       allowExpired?: boolean;
       printLogs?: boolean;
+      expectedPcrs?: Map<number, Uint8Array>;
     } = {}
   ) {
     this.allowExpired = opts.allowExpired;
     this.printLogs = opts.printLogs;
+    this.expectedPcrs = opts.expectedPcrs;
   }
 
   public async validateBuildCert(
@@ -318,6 +321,19 @@ export class Validator {
       ? await this.parseValidateRootCertAttestation(JSON.parse(teeRootTag))
       : await this.parseValidateAttestation(e.content, e.pubkey);
 
+    // check expected image
+    if (this.expectedPcrs) {
+      for (const [k, a] of this.expectedPcrs.entries()) {
+        const expected = bytesToHex(a);
+        const pcr = bytesToHex(payload.pcrs.get(k) || new Uint8Array());
+        if (this.printLogs) console.log("pcr", k, pcr, expected);
+        if (pcr !== expected) {
+          console.log(`wrong pcr ${k}:${pcr} expected ${expected}`);
+          return false;
+        }
+      }
+    }
+
     const instance = tv(e, "instance");
     if (instance) {
       const ie = JSON.parse(instance);
@@ -336,6 +352,8 @@ export class Validator {
         throw new Error("Invalid build signature");
       await this.verifyBuildSignature(payload, be);
     }
+
+    return true;
   }
 
   public async validateEnclavedEvent(e: Event) {

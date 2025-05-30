@@ -1,10 +1,13 @@
 {
   "name": "nostr-enclaves",
-  "version": "2.0.9",
+  "version": "2.0.11",
   "description": "Nostr + AWS Nitro Enclaves utilities",
   "author": "artur@nostr.band",
   "license": "MIT",
-  "keywords": ["nostr", "aws nitro enclave"],
+  "keywords": [
+    "nostr",
+    "aws nitro enclave"
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -18,7 +21,9 @@
   },
   "typesVersions": {
     "*": {
-      "*": ["dist/types/*"]
+      "*": [
+        "dist/types/*"
+      ]
     }
   },
   "files": [
@@ -41,6 +46,7 @@
     "@rollup/plugin-typescript": "^12.1.2",
     "@types/node": "^22.13.14",
     "rollup": "^4.37.0",
+    "tsx": "^4.19.4",
     "typescript": "^5.4.5"
   }
 }
