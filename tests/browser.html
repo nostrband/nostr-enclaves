@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Nostr Enclaves Browser Test</title>
     <style>
@@ -9,12 +10,14 @@
             margin: 20px auto;
             padding: 0 20px;
         }
+
         textarea {
             width: 100%;
             height: 200px;
             margin: 10px 0;
             font-family: monospace;
         }
+
         #results {
             white-space: pre-wrap;
             font-family: monospace;
@@ -22,11 +25,21 @@
             padding: 10px;
             border-radius: 4px;
         }
-        .error { color: #d32f2f; }
-        .success { color: #388e3c; }
-        .skip { color: #f57c00; }
+
+        .error {
+            color: #d32f2f;
+        }
+
+        .success {
+            color: #388e3c;
+        }
+
+        .skip {
+            color: #f57c00;
+        }
     </style>
 </head>
+
 <body>
     <h1>Nostr Enclaves Browser Test</h1>
     <p>Paste JSON events (one per line) to validate:</p>
@@ -36,7 +49,7 @@
 
     <script type="module">
         // Import required dependencies
-        import { Validator } from 'https://unpkg.com/nostr-enclaves@2.0.7/dist/index.js';
+        import { Validator } from 'https://unpkg.com/nostr-enclaves@2.0.11/dist/index.js';
 
         const validator = new Validator({ allowExpired: false, printLogs: false });
 
@@ -60,22 +73,35 @@
             }
         }
 
-        window.validateEvents = async function() {
+        window.validateEvents = async function () {
             const input = document.getElementById('input').value;
             const results = document.getElementById('results');
             results.innerHTML = '';
-            
-            const lines = input.split('\n').filter(line => line.trim());
-            
+
+            const lines = input.split('\n').map(line => line.trim()).filter(line => !!line);
+
             for (const line of lines) {
-                try {
-                    const event = JSON.parse(line);
-                    const result = await validateEvent(event);
-                    
-                    const className = result.valid ? 'success' : (result.skipped ? 'skip' : 'error');
-                    appendResult(result.message, className);
-                } catch (e) {
-                    appendResult('invalid: failed to parse JSON', 'error');
+                if (line.startsWith("{")) {
+
+                    try {
+                        const event = JSON.parse(line);
+                        const result = await validateEvent(event);
+
+                        const className = result.valid ? 'success' : (result.skipped ? 'skip' : 'error');
+                        appendResult(result.message, className);
+                    } catch (e) {
+                        appendResult('invalid: failed to parse JSON', 'error');
+                    }
+                } else {
+                    try {
+                        const r = await validator.parseValidateAttestation(line);
+                        console.log("r", r)
+                        // const className = r ? 'success' : (result.skipped ? 'skip' : 'error');
+                        // appendResult(result.message, className);
+                    } catch (e) {
+                        console.log("e", e);
+                        appendResult('invalid: failed to parse attestation', 'error');
+                    }
                 }
             }
         }
@@ -89,4 +115,5 @@
         }
     </script>
 </body>
-</html> 
+
+</html>
