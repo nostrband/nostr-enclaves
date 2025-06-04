@@ -1,6 +1,5 @@
 import readline from "node:readline";
 import { Validator } from "../dist";
-import { hexToBytes } from "@noble/hashes/utils";
 
 async function runNodeTests() {
   const validator = new Validator({
@@ -11,6 +10,10 @@ async function runNodeTests() {
     //   [1, hexToBytes("4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493")],
     //   [2, hexToBytes("d4832bd8fd73135d7a8b1f8f26e31a2b55e68b0f430640b15ffaeb250a38d415e9b83e7511e0a58660222579b8976ccd")],
     // ])
+    // expectedRelease: {
+    //   ref: "https://github.com/nostrband/keycrux",
+    //   signerPubkeys: ["3356de61b39647931ce8b2140b2bab837e0810c0ef515bbe92de0248040b8bdd"],
+    // }
   });
 
   const rl = readline.createInterface({
@@ -28,10 +31,10 @@ async function runNodeTests() {
         return;
       }
 
-      let validPcrs = false;
+      let validExpectations = false;
       try {
         if (event.kind === 63793) {
-          validPcrs = await validator.validateInstance(event);
+          validExpectations = await validator.validateInstance(event);
         } else if (event.kind === 13196) {
           await validator.validateEnclavedEvent(event);
         } else {
@@ -39,8 +42,8 @@ async function runNodeTests() {
           return;
         }
 
-        if (validPcrs) console.log("valid", event.kind, event.id);
-        else console.log("invalid pcrs", event.kind, event.id);
+        if (validExpectations) console.log("valid", event.kind, event.id);
+        else console.log("invalid expectations", event.kind, event.id);
       } catch (e) {
         console.log("invalid", event.kind, event.id, e.message);
       }

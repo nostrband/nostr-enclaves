@@ -13,6 +13,9 @@ export const AWS_ROOT_CERT =
 export const KIND_INSTANCE = 63793;
 export const KIND_ROOT_CERT = 23793;
 export const KIND_CERT = 23797;
+export const KIND_BUILD_SIGNATURE = 63795;
+export const KIND_INSTANCE_SIGNATURE = 63796;
+export const KIND_RELEASE_SIGNATURE = 63792;
 
 export interface AttestationData {
   public_key: Uint8Array;
@@ -50,16 +53,26 @@ export class Validator {
   private allowExpired?: boolean;
   private printLogs?: boolean;
   private expectedPcrs?: Map<number, Uint8Array>;
+  private expectedRelease?: {
+    ref: string;
+    signerPubkeys: string[];
+  };
+
   constructor(
     opts: {
       allowExpired?: boolean;
       printLogs?: boolean;
       expectedPcrs?: Map<number, Uint8Array>;
+      expectedRelease?: {
+        ref: string;
+        signerPubkeys: string[];
+      };
     } = {}
   ) {
     this.allowExpired = opts.allowExpired;
     this.printLogs = opts.printLogs;
     this.expectedPcrs = opts.expectedPcrs;
+    this.expectedRelease = opts.expectedRelease;
   }
 
   public async validateBuildCert(
@@ -140,11 +153,23 @@ export class Validator {
     if (instancePCR4 !== enclavePCR4) throw new Error("No matching PCR4");
   }
 
+  public async verifyReleaseSignature(att: AttestationData, instance: Event) {
+    for (const i of [0, 1, 2]) {
+      const enclavePCR = bytesToHex(att.pcrs.get(i) || new Uint8Array());
+      if (!enclavePCR) throw new Error("Bad attestation, no PCR" + i);
+      const instancePCR = tv(instance, "PCR" + i);
+      if (!instancePCR) throw new Error(`No PCR${i} in instance`);
+      if (instancePCR !== enclavePCR) throw new Error("No matching PCR" + i);
+    }
+  }
+
   private fromBase64(base64: string): Uint8Array {
     return base64ToUint8Array(base64);
   }
 
   public async parseValidateAttestation(attestation: string, pubkey?: string) {
+    if (attestation.length > 10000) throw new Error("Attestation size too big");
+
     // parse attestation content
     const arr = this.fromBase64(attestation);
     const COSE_Sign1 = decode(arr);
@@ -307,7 +332,11 @@ export class Validator {
     await this.parseValidateRootCertAttestation(cert);
   }
 
-  public async validateInstance(e: Event) {
+  // Returns:
+  // - 'true' if instance is valid AND matches the expectations.
+  // - 'false' if info is valid but doesn't match the expectations.
+  // Throws error if info is invalid.
+  public async validateInstance(e: Event): Promise<boolean> {
     if (e.kind !== KIND_INSTANCE)
       throw new Error("Invalid instance event kind");
     if (!validateEvent(e) || !verifyEvent(e))
@@ -334,23 +363,69 @@ export class Validator {
       }
     }
 
+    // verify the instance info
     const instance = tv(e, "instance");
     if (instance) {
       const ie = JSON.parse(instance);
-      if (ie.kind !== 63796)
+      if (ie.kind !== KIND_INSTANCE_SIGNATURE)
         throw new Error("Invalid instance signature event kind");
       if (!validateEvent(ie) || !verifyEvent(ie))
         throw new Error("Invalid instance signature");
       await this.verifyInstanceSignature(payload, ie);
     }
+
+    // verify the build info
     const build = tv(e, "build");
     if (build) {
       const be = JSON.parse(build);
-      if (be.kind !== 63795)
+      if (be.kind !== KIND_BUILD_SIGNATURE)
         throw new Error("Invalid build signature event kind");
       if (!validateEvent(be) || !verifyEvent(be))
         throw new Error("Invalid build signature");
       await this.verifyBuildSignature(payload, be);
+    }
+
+    // verify the release signatures
+    const releaseData: { ref: string; pubkey: string }[] = [];
+    const releases = e.tags
+      .filter((t) => t.length > 1 && t[0] === "release")
+      .map((t) => t[1]);
+    if (releases.length) {
+      for (const release of releases) {
+        const re = JSON.parse(release) as Event;
+        if (re.kind !== KIND_RELEASE_SIGNATURE)
+          throw new Error("Invalid release signature event kind");
+        if (!validateEvent(re) || !verifyEvent(re))
+          throw new Error("Invalid release signature");
+        await this.verifyReleaseSignature(payload, re);
+
+        releaseData.push({
+          ref: tv(re, "r") || "",
+          pubkey: re.pubkey,
+        });
+      }
+    }
+
+    // check release expectations
+    if (this.expectedRelease) {
+      if (!releaseData.length) {
+        console.log("No release data");
+        return false;
+      }
+
+      // expected ref must match in all release signatures
+      if (releaseData.find((d) => d.ref !== this.expectedRelease!.ref)) {
+        console.log("Wrong release ref");
+        return false;
+      }
+
+      // all expected pubkeys' release signatures must be present
+      for (const p of this.expectedRelease.signerPubkeys) {
+        if (!releaseData.find((d) => d.pubkey === p)) {
+          console.log("Release signature not found for pubkey");
+          return false;
+        }
+      }
     }
 
     return true;
