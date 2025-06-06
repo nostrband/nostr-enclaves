@@ -4,7 +4,7 @@ import { Validator } from "../dist";
 async function runNodeTests() {
   const validator = new Validator({
     allowExpired: false,
-    printLogs: true,
+    // printLogs: true,
     // expectedPcrs: new Map([
     //   [0, hexToBytes("6dc806f3a214e71f4a468979704c90abe1e6597af6360dbd92d9ba1861300be6c48a5e4c95e453046d48fa62b6b296f8")],
     //   [1, hexToBytes("4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493")],

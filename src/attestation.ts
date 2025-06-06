@@ -90,15 +90,19 @@ export class Validator {
     if (!certData || !pubkey || !pcr8) {
       throw new Error("Missing required parameters");
     }
-    if (!/^[a-zA-Z0-9+/=]+$/.test(certData)) {
-      throw new Error("Invalid certificate data format");
-    }
+
     if (!certData.startsWith("--")) {
       certData =
         "-----BEGIN CERTIFICATE-----\n" +
         certData +
         "\n-----END CERTIFICATE-----\n";
     }
+    const pemCertRegex =
+      /^-----BEGIN CERTIFICATE-----\n([a-zA-Z0-9+/=\n]+)-----END CERTIFICATE-----$/m;
+    if (!pemCertRegex.test(certData)) {
+      throw new Error("Invalid certificate data format");
+    }
+
     const cert = new X509Certificate(certData);
     // console.log("cert", cert);
     if (!cert.isSelfSigned()) throw new Error("Cert not self-signed");
@@ -168,7 +172,9 @@ export class Validator {
     for (const i of [0, 1, 2]) {
       const enclavePCR = bytesToHex(att.pcrs.get(i) || new Uint8Array());
       if (!enclavePCR) throw new Error("Bad attestation, no PCR" + i);
-      const instancePCR = tv(instance, "PCR" + i);
+      const instancePCR = instance.tags.find(
+        (t) => t.length > 2 && t[0] === "x" && t[2] === "PCR" + i
+      )?.[1] || tv(instance, "PCR"+i); // PCRx tags are deprecated, use 'x' only
       if (!instancePCR) throw new Error(`No PCR${i} in instance`);
       if (instancePCR !== enclavePCR) throw new Error("No matching PCR" + i);
     }
@@ -380,7 +386,10 @@ export class Validator {
     const instance = tv(e, "instance");
     if (instance) {
       const ie = JSON.parse(instance);
-      if (ie.kind !== KIND_INSTANCE_SIGNATURE && ie.kind !== KIND_INSTANCE_SIGNATURE_OLD)
+      if (
+        ie.kind !== KIND_INSTANCE_SIGNATURE &&
+        ie.kind !== KIND_INSTANCE_SIGNATURE_OLD
+      )
         throw new Error("Invalid instance signature event kind");
       if (!validateEvent(ie) || !verifyEvent(ie))
         throw new Error("Invalid instance signature");
@@ -391,7 +400,10 @@ export class Validator {
     const build = tv(e, "build");
     if (build) {
       const be = JSON.parse(build);
-      if (be.kind !== KIND_BUILD_SIGNATURE && be.kind !== KIND_BUILD_SIGNATURE_OLD)
+      if (
+        be.kind !== KIND_BUILD_SIGNATURE &&
+        be.kind !== KIND_BUILD_SIGNATURE_OLD
+      )
         throw new Error("Invalid build signature event kind");
       if (!validateEvent(be) || !verifyEvent(be))
         throw new Error("Invalid build signature");
@@ -406,7 +418,10 @@ export class Validator {
     if (releases.length) {
       for (const release of releases) {
         const re = JSON.parse(release) as Event;
-        if (re.kind !== KIND_RELEASE_SIGNATURE && re.kind !== KIND_RELEASE_SIGNATURE_OLD)
+        if (
+          re.kind !== KIND_RELEASE_SIGNATURE &&
+          re.kind !== KIND_RELEASE_SIGNATURE_OLD
+        )
           throw new Error("Invalid release signature event kind");
         if (!validateEvent(re) || !verifyEvent(re))
           throw new Error("Invalid release signature");
