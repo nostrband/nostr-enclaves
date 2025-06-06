@@ -59,7 +59,7 @@
             }
 
             try {
-                if (event.kind === 63793) {
+                if (event.kind === 63793 || event.kind === 13793) {
                     await validator.validateInstance(event);
                     return { valid: true, message: `valid ${event.kind} ${event.id}` };
                 } else if (event.kind === 13196) {

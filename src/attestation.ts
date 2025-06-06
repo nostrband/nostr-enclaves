@@ -10,12 +10,19 @@ import { getCrypto, getSubtleCrypto } from "./crypto-utils";
 export const AWS_ROOT_CERT =
   "MIICETCCAZagAwIBAgIRAPkxdWgbkK/hHUbMtOTn+FYwCgYIKoZIzj0EAwMwSTELMAkGA1UEBhMCVVMxDzANBgNVBAoMBkFtYXpvbjEMMAoGA1UECwwDQVdTMRswGQYDVQQDDBJhd3Mubml0cm8tZW5jbGF2ZXMwHhcNMTkxMDI4MTMyODA1WhcNNDkxMDI4MTQyODA1WjBJMQswCQYDVQQGEwJVUzEPMA0GA1UECgwGQW1hem9uMQwwCgYDVQQLDANBV1MxGzAZBgNVBAMMEmF3cy5uaXRyby1lbmNsYXZlczB2MBAGByqGSM49AgEGBSuBBAAiA2IABPwCVOumCMHzaHDimtqQvkY4MpJzbolL//Zy2YlES1BR5TSksfbb48C8WBoyt7F2Bw7eEtaaP+ohG2bnUs990d0JX28TcPQXCEPZ3BABIeTPYwEoCWZEh8l5YoQwTcU/9KNCMEAwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUkCW1DdkFR+eWw5b6cp3PmanfS5YwDgYDVR0PAQH/BAQDAgGGMAoGCCqGSM49BAMDA2kAMGYCMQCjfy+Rocm9Xue4YnwWmNJVA44fA0P5W2OpYow9OYCVRaEevL8uO1XYru5xtMPWrfMCMQCi85sWBbJwKKXdS6BptQFuZbT73o/gBh1qUxl/nNr12UO8Yfwr6wPLb+6NIwLz3/Y=";
 
-export const KIND_INSTANCE = 63793;
+export const KIND_ANNOUNCEMENT = 13793;
+export const KIND_ANNOUNCEMENT_OLD = 63793;
+
 export const KIND_ROOT_CERT = 23793;
 export const KIND_CERT = 23797;
-export const KIND_BUILD_SIGNATURE = 63795;
-export const KIND_INSTANCE_SIGNATURE = 63796;
-export const KIND_RELEASE_SIGNATURE = 63792;
+
+export const KIND_BUILD_SIGNATURE = 23794;
+export const KIND_INSTANCE_SIGNATURE = 23795;
+export const KIND_RELEASE_SIGNATURE = 63794;
+
+export const KIND_BUILD_SIGNATURE_OLD = 63795;
+export const KIND_INSTANCE_SIGNATURE_OLD = 63796;
+export const KIND_RELEASE_SIGNATURE_OLD = 63792;
 
 export interface AttestationData {
   public_key: Uint8Array;
@@ -86,10 +93,12 @@ export class Validator {
     if (!/^[a-zA-Z0-9+/=]+$/.test(certData)) {
       throw new Error("Invalid certificate data format");
     }
-    certData =
-      "-----BEGIN CERTIFICATE-----\n" +
-      certData +
-      "\n-----END CERTIFICATE-----\n";
+    if (!certData.startsWith("--")) {
+      certData =
+        "-----BEGIN CERTIFICATE-----\n" +
+        certData +
+        "\n-----END CERTIFICATE-----\n";
+    }
     const cert = new X509Certificate(certData);
     // console.log("cert", cert);
     if (!cert.isSelfSigned()) throw new Error("Cert not self-signed");
@@ -111,9 +120,11 @@ export class Validator {
 
     const O = getField("O");
     if (O !== "Nostr") throw new Error("Cert not for Nostr");
-    const OU = getField("OU");
+
+    const OU = getField("OU"); // deprecated, remove later
+    const CN = getField("CN");
     const npub = nip19.npubEncode(pubkey);
-    if (OU !== npub) throw new Error("Wrong cert pubkey");
+    if (OU !== npub && CN !== npub) throw new Error("Wrong cert pubkey");
 
     // pcr8 validation https://github.com/aws/aws-nitro-enclaves-cli/issues/446#issuecomment-1460766038
     const fingerprint = sha384(new Uint8Array(cert.rawData));
@@ -169,6 +180,8 @@ export class Validator {
 
   public async parseValidateAttestation(attestation: string, pubkey?: string) {
     if (attestation.length > 10000) throw new Error("Attestation size too big");
+
+    // NOTE: based on https://aws.amazon.com/blogs/compute/validating-attestation-documents-produced-by-aws-nitro-enclaves/
 
     // parse attestation content
     const arr = this.fromBase64(attestation);
@@ -337,7 +350,7 @@ export class Validator {
   // - 'false' if info is valid but doesn't match the expectations.
   // Throws error if info is invalid.
   public async validateInstance(e: Event): Promise<boolean> {
-    if (e.kind !== KIND_INSTANCE)
+    if (e.kind !== KIND_ANNOUNCEMENT && e.kind !== KIND_ANNOUNCEMENT_OLD)
       throw new Error("Invalid instance event kind");
     if (!validateEvent(e) || !verifyEvent(e))
       throw new Error("Invalid instance event");
@@ -367,7 +380,7 @@ export class Validator {
     const instance = tv(e, "instance");
     if (instance) {
       const ie = JSON.parse(instance);
-      if (ie.kind !== KIND_INSTANCE_SIGNATURE)
+      if (ie.kind !== KIND_INSTANCE_SIGNATURE && ie.kind !== KIND_INSTANCE_SIGNATURE_OLD)
         throw new Error("Invalid instance signature event kind");
       if (!validateEvent(ie) || !verifyEvent(ie))
         throw new Error("Invalid instance signature");
@@ -378,7 +391,7 @@ export class Validator {
     const build = tv(e, "build");
     if (build) {
       const be = JSON.parse(build);
-      if (be.kind !== KIND_BUILD_SIGNATURE)
+      if (be.kind !== KIND_BUILD_SIGNATURE && be.kind !== KIND_BUILD_SIGNATURE_OLD)
         throw new Error("Invalid build signature event kind");
       if (!validateEvent(be) || !verifyEvent(be))
         throw new Error("Invalid build signature");
@@ -393,7 +406,7 @@ export class Validator {
     if (releases.length) {
       for (const release of releases) {
         const re = JSON.parse(release) as Event;
-        if (re.kind !== KIND_RELEASE_SIGNATURE)
+        if (re.kind !== KIND_RELEASE_SIGNATURE && re.kind !== KIND_RELEASE_SIGNATURE_OLD)
           throw new Error("Invalid release signature event kind");
         if (!validateEvent(re) || !verifyEvent(re))
           throw new Error("Invalid release signature");

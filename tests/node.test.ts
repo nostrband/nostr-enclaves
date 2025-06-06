@@ -33,7 +33,7 @@ async function runNodeTests() {
 
       let validExpectations = false;
       try {
-        if (event.kind === 63793) {
+        if (event.kind === 63793 || event.kind === 13793) {
           validExpectations = await validator.validateInstance(event);
         } else if (event.kind === 13196) {
           await validator.validateEnclavedEvent(event);
